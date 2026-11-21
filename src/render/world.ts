@@ -15,11 +15,18 @@ const TERRAIN_SEGMENTS = [14, 22, 36, 64, 110, 180];
 const ICO_DETAIL = [0, 0, 1, 2, 3, 5];
 const TREE_COUNT = [3, 9, 22, 48, 95];
 const GRASS_COUNT = [0, 500, 5000, 22000, 70000];
+const FLOWER_COUNT = [0, 0, 250, 1400, 4500];
 const HAIR_COUNT = [0, 0, 140, 4500, 26000];
 const SHADOW_MAP = [0, 0, 512, 2048, 4096];
+/**
+ * Performance saver levels (0 = off, 3 = emergency). These cut the real cost of
+ * the most expensive tiers without changing what the player owns.
+ */
+const PERF_INSTANCE_SCALE = [1, 0.5, 0.2, 0.08];
+const PERF_SHADOW_CAP = [4096, 1024, 512, 256];
+const FLOWER_COLOURS = [0xffffff, 0xffd84d, 0xff7bb5, 0xb48cff, 0xff5d5d, 0x8fd3ff];
 
 export const SUN_DIRECTION = new THREE.Vector3(0.75, 0.3, 0.5).normalize();
-export const SUN_DISTANCE = 220;
 const POND = new THREE.Vector2(5.5, 2.5);
 const POND_RADIUS = 4.2;
 const HERO = new THREE.Vector3(-1.5, 0, 0.5);
@@ -61,6 +68,60 @@ interface MatOptions {
   minLighting?: number;
 }
 
+const SkyShader = {
+  vertexShader: /* glsl */ `
+    varying vec3 vDir;
+    void main() {
+      vDir = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform vec3 uTop, uHorizon, uSunDir, uSunColor;
+    uniform float uBands, uFlat, uClouds, uSunPower, uGlow, uTime;
+    varying vec3 vDir;
+
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm(vec2 p) {
+      float sum = 0.0, amp = 0.5;
+      for (int i = 0; i < 5; i++) { sum += amp * noise(p); p = p * 2.03 + vec2(11.7, 3.1); amp *= 0.5; }
+      return sum;
+    }
+
+    void main() {
+      vec3 d = normalize(vDir);
+      vec3 col;
+      if (uFlat > 0.5) {
+        col = mix(uHorizon, uTop, 0.55);
+      } else {
+        float t = pow(clamp(d.y, 0.0, 1.0), 0.5);
+        if (uBands > 0.5) t = floor(t * uBands + 0.5) / uBands;
+        col = mix(uHorizon, uTop, t);
+      }
+      if (uClouds > 0.0 && d.y > 0.0) {
+        vec2 p = d.xz / (d.y + 0.18) * 1.3 + vec2(uTime * 0.012, uTime * 0.004);
+        float n = fbm(p);
+        float edge = 1.0 - uClouds * 0.62;
+        float density = smoothstep(edge, edge + 0.22, n);
+        // Cheap self-shadowing: compare against a sample taken towards the sun.
+        float shade = clamp(0.72 + (n - fbm(p + uSunDir.xz * 0.25)) * 1.6, 0.55, 1.05);
+        vec3 cloud = mix(vec3(0.6, 0.66, 0.78), vec3(1.0), shade);
+        col = mix(col, cloud, density * smoothstep(0.0, 0.16, d.y) * 0.95);
+      }
+      float sd = dot(d, uSunDir);
+      col = mix(col, uSunColor * uSunPower, smoothstep(0.99925, 0.9996, sd));
+      col += uSunColor * uGlow * (pow(max(sd, 0.0), 90.0) * 0.5 + pow(max(sd, 0.0), 10.0) * 0.12);
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+};
+
+export const SKY_TOP = 0x3f7fe0;
+export const SKY_HORIZON = 0xcfe3f5;
+
 export class World {
   readonly group = new THREE.Group();
   private readonly time = { value: 0 };
@@ -68,24 +129,39 @@ export class World {
   private readonly extras: { dispose(): void }[] = [];
   private readonly cfg: GfxConfig;
   private readonly maxAniso: number;
+  private readonly perf: number;
+  private dome: THREE.Mesh | null = null;
+  private jumpStart = -10;
 
-  constructor(cfg: GfxConfig, maxAnisotropy: number) {
+  constructor(cfg: GfxConfig, maxAnisotropy: number, perf = 0) {
     this.cfg = cfg;
     this.maxAniso = maxAnisotropy;
+    this.perf = Math.min(PERF_INSTANCE_SCALE.length - 1, Math.max(0, perf));
     this.addLights();
     this.addTerrain();
     this.addHero();
     this.addProps();
     this.addTrees();
     this.addGrass();
+    this.addFlowers();
     this.addWater();
     this.addSky();
     if (cfg.lighting >= 5) this.addPuddles();
   }
 
-  update(t: number): void {
+  update(t: number, camera: THREE.PerspectiveCamera): void {
     this.time.value = t;
     for (const fn of this.animators) fn(t);
+    if (this.dome) {
+      // The sky follows the camera and always sits just inside the far plane.
+      this.dome.position.copy(camera.position);
+      this.dome.scale.setScalar(camera.far * 0.9);
+    }
+  }
+
+  /** The gameplay. */
+  jump(): void {
+    if (this.time.value - this.jumpStart > 0.7) this.jumpStart = this.time.value;
   }
 
   dispose(): void {
@@ -174,11 +250,11 @@ export class World {
   private addLights(): void {
     const L = this.cfg.lighting;
     const S = this.cfg.shadows;
-    const sun = new THREE.DirectionalLight(0xfff0dd, L >= 3 ? 2.7 : 2.4);
+    const sun = new THREE.DirectionalLight(0xfff0dd, L >= 4 ? 2.3 : L >= 3 ? 2.7 : 2.4);
     sun.position.copy(SUN_DIRECTION).multiplyScalar(45);
     if (S >= 2) {
       sun.castShadow = true;
-      sun.shadow.mapSize.setScalar(SHADOW_MAP[S]);
+      sun.shadow.mapSize.setScalar(Math.min(SHADOW_MAP[S], PERF_SHADOW_CAP[this.perf]));
       const cam = sun.shadow.camera;
       cam.left = cam.bottom = -24;
       cam.right = cam.top = 24;
@@ -190,8 +266,8 @@ export class World {
     }
     this.add(sun);
     this.add(sun.target);
-    this.add(new THREE.AmbientLight(0x9fb4d8, L >= 4 ? 0.35 : 1.0));
-    if (L >= 4) this.add(new THREE.HemisphereLight(0xa9ccff, 0x55683a, 0.7));
+    this.add(new THREE.AmbientLight(0x9fb4d8, L >= 4 ? 0.3 : 1.0));
+    if (L >= 4) this.add(new THREE.HemisphereLight(0xa9ccff, 0x55683a, 0.45));
   }
 
   private addTerrain(): void {
@@ -259,6 +335,8 @@ export class World {
     this.animators.push((t) => {
       body.position.y = Math.sin(t * 1.6) * 0.012;
       body.rotation.y = Math.sin(t * 0.5) * 0.08;
+      const j = (t - this.jumpStart) / 0.7;
+      hero.position.y = j > 0 && j < 1 ? 4.4 * j * (1 - j) : 0;
     });
     this.blob(HERO.x, HERO.z, 0.95);
   }
@@ -272,7 +350,7 @@ export class World {
       helmet.position.copy(centre);
       return;
     }
-    const count = HAIR_COUNT[tier];
+    const count = Math.round(HAIR_COUNT[tier] * (tier >= 3 ? PERF_INSTANCE_SCALE[this.perf] : 1));
     const width = tier === 2 ? 0.06 : tier === 3 ? 0.012 : 0.006;
     // A strand is a tapered sliver pointing along +Y in its local frame.
     const geo = new THREE.BufferGeometry();
@@ -355,39 +433,74 @@ export class World {
   private addTrees(): void {
     const count = TREE_COUNT[this.cfg.foliage];
     const rand = rng(5);
-    const radial = RADIAL[this.cfg.polygons];
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.26, 2.2, radial, 1), this.mat('bark', { rough: 0.9 }), count);
-    const layers = new THREE.InstancedMesh(new THREE.ConeGeometry(1.5, 2.4, radial, 1), this.mat('leaves', { rough: 0.8 }), count * 3);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    for (let i = 0; i < count; ) {
+    // Decide every tree up front so lower foliage tiers are a strict subset of higher ones.
+    const trees: { x: number; y: number; z: number; s: number; turn: number; leafy: boolean; shade: number }[] = [];
+    while (trees.length < count) {
       const a = rand() * Math.PI * 2;
       const r = 17 + rand() ** 1.4 * 40;
+      const s = 0.8 + rand() * 0.9;
+      const turn = rand() * 6;
+      const leafy = rand() < 0.32;
+      const shade = 0.78 + rand() * 0.4;
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      const s = 0.8 + rand() * 0.9;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * 6);
       if (Math.hypot(x - POND.x, z - POND.y) < POND_RADIUS + 2) continue;
-      const y = terrainHeight(x, z) - 0.15;
-      m.compose(new THREE.Vector3(x, y + 1.1 * s, z), q, new THREE.Vector3(s, s, s));
-      trunks.setMatrixAt(i, m);
-      for (let k = 0; k < 3; k++) {
-        const ls = s * (1 - k * 0.24);
-        m.compose(new THREE.Vector3(x, y + (2.6 + k * 1.25) * s, z), q, new THREE.Vector3(ls, s, ls));
-        layers.setMatrixAt(i * 3 + k, m);
-      }
-      this.blob(x, z, 1.7 * s);
-      i++;
+      trees.push({ x, y: terrainHeight(x, z) - 0.15, z, s, turn, leafy, shade });
     }
-    for (const inst of [trunks, layers]) {
-      inst.castShadow = inst.receiveShadow = this.cfg.shadows >= 2;
+    const pines = trees.filter((t) => !t.leafy);
+    const leafy = trees.filter((t) => t.leafy);
+    const radial = RADIAL[this.cfg.polygons];
+    const shadows = this.cfg.shadows >= 2;
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.26, 2.2, radial, 1), this.mat('bark', { rough: 0.9 }), trees.length);
+    const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1.5, 2.4, radial, 1), this.mat('leaves', { rough: 0.8 }), Math.max(1, pines.length * 3));
+    const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, ICO_DETAIL[this.cfg.polygons]), this.mat('leaves', { rough: 0.8 }), Math.max(1, leafy.length * 2));
+    cones.count = pines.length * 3;
+    crowns.count = leafy.length * 2;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const tint = new THREE.Color();
+    trees.forEach((t, i) => {
+      q.setFromAxisAngle(yAxis, t.turn);
+      m.compose(new THREE.Vector3(t.x, t.y + 1.1 * t.s, t.z), q, new THREE.Vector3(t.s, t.s, t.s));
+      trunks.setMatrixAt(i, m);
+      this.blob(t.x, t.z, 1.7 * t.s);
+    });
+    pines.forEach((t, i) => {
+      q.setFromAxisAngle(yAxis, t.turn);
+      for (let k = 0; k < 3; k++) {
+        const ls = t.s * (1 - k * 0.24);
+        m.compose(new THREE.Vector3(t.x, t.y + (2.6 + k * 1.25) * t.s, t.z), q, new THREE.Vector3(ls, t.s, ls));
+        cones.setMatrixAt(i * 3 + k, m);
+        cones.setColorAt(i * 3 + k, tint.setRGB(t.shade * 0.92, t.shade, t.shade * 0.95));
+      }
+    });
+    leafy.forEach((t, i) => {
+      q.setFromAxisAngle(yAxis, t.turn);
+      const s = t.s;
+      m.compose(new THREE.Vector3(t.x, t.y + 3.3 * s, t.z), q, new THREE.Vector3(1.75 * s, 1.5 * s, 1.75 * s));
+      crowns.setMatrixAt(i * 2, m);
+      m.compose(new THREE.Vector3(t.x + Math.cos(t.turn) * 0.9 * s, t.y + 4.2 * s, t.z + Math.sin(t.turn) * 0.9 * s), q, new THREE.Vector3(1.15 * s, 1.05 * s, 1.15 * s));
+      crowns.setMatrixAt(i * 2 + 1, m);
+      // Broadleaf crowns lean warmer and lighter than the pines.
+      tint.setRGB(t.shade * 1.25, t.shade * 1.12, t.shade * 0.7);
+      crowns.setColorAt(i * 2, tint);
+      crowns.setColorAt(i * 2 + 1, tint);
+    });
+    for (const inst of [trunks, cones, crowns]) {
+      if (inst.count === 0) {
+        inst.geometry.dispose();
+        (inst.material as THREE.Material).dispose();
+        continue;
+      }
+      inst.castShadow = inst.receiveShadow = shadows;
       inst.frustumCulled = false;
       this.add(inst);
     }
   }
 
   private addGrass(): void {
-    const count = GRASS_COUNT[this.cfg.foliage];
+    const count = Math.round(GRASS_COUNT[this.cfg.foliage] * PERF_INSTANCE_SCALE[this.perf]);
     if (!count) return;
     const detailed = this.cfg.polygons >= 3;
     const geo = new THREE.BufferGeometry();
@@ -395,11 +508,18 @@ export class World {
     const verts = detailed
       ? [-w, 0, 0, w, 0, 0, -w * 0.6, 0.5, 0.04, w, 0, 0, w * 0.6, 0.5, 0.04, -w * 0.6, 0.5, 0.04, -w * 0.6, 0.5, 0.04, w * 0.6, 0.5, 0.04, 0, 1, 0.16]
       : [-w, 0, 0, w, 0, 0, 0, 1, 0];
+    const n = verts.length / 3;
     geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    const up = new Array(verts.length / 3).fill([0, 1, 0]).flat();
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(up, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((verts.length / 3) * 2).fill(0.5), 2));
-    const material = this.mat('grass', { colour: 0xffffff, textured: false, doubleSided: true, rough: 0.8 });
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(n).fill([0, 1, 0]).flat(), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(n * 2).fill(0.5), 2));
+    // Darker at the root, lighter at the tip, so a dense lawn has some depth to it.
+    const shades: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const k = 0.45 + 0.65 * verts[i * 3 + 1];
+      shades.push(k, k, k);
+    }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
+    const material = this.mat('grass', { colour: 0xffffff, textured: false, doubleSided: true, rough: 0.8, vertexColors: true });
     this.addSway(material, '0.22 * position.y * position.y');
     const grass = new THREE.InstancedMesh(geo, material, count);
     const rand = rng(31);
@@ -417,13 +537,43 @@ export class World {
       const h = 0.3 + rand() * 0.5;
       m.compose(new THREE.Vector3(x, terrainHeight(x, z) - 0.02, z), q, new THREE.Vector3(1.2, h, 1.2));
       grass.setMatrixAt(i, m);
-      grass.setColorAt(i, tint.setRGB(0.22 + rand() * 0.2, 0.5 + rand() * 0.3, 0.12 + rand() * 0.1, THREE.SRGBColorSpace));
+      const dry = rand();
+      grass.setColorAt(i, tint.setRGB(0.24 + dry * 0.22, 0.5 + rand() * 0.2, 0.12 + rand() * 0.08, THREE.SRGBColorSpace));
       i++;
     }
     grass.castShadow = false;
     grass.receiveShadow = this.cfg.shadows >= 2;
     grass.frustumCulled = false;
     this.add(grass);
+  }
+
+  private addFlowers(): void {
+    const count = Math.round(FLOWER_COUNT[this.cfg.foliage] * PERF_INSTANCE_SCALE[this.perf]);
+    if (!count) return;
+    const material = this.mat('cloth', { colour: 0xffffff, textured: false, rough: 0.6 });
+    const flowers = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.075, this.cfg.polygons >= 4 ? 1 : 0), material, count);
+    const rand = rng(63);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const tint = new THREE.Color();
+    for (let i = 0; i < count; ) {
+      const a = rand() * Math.PI * 2;
+      const r = Math.sqrt(rand()) * 30;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const lift = 0.3 + rand() * 0.22;
+      const s = 0.7 + rand() * 0.8;
+      const colour = FLOWER_COLOURS[Math.floor(rand() * FLOWER_COLOURS.length)];
+      if (Math.hypot(x - POND.x, z - POND.y) < POND_RADIUS + 0.2) continue;
+      m.compose(new THREE.Vector3(x, terrainHeight(x, z) + lift, z), q, new THREE.Vector3(s, s * 0.6, s));
+      flowers.setMatrixAt(i, m);
+      flowers.setColorAt(i, tint.set(colour));
+      i++;
+    }
+    flowers.castShadow = false;
+    flowers.receiveShadow = this.cfg.shadows >= 2;
+    flowers.frustumCulled = false;
+    this.add(flowers);
   }
 
   private addWater(): void {
@@ -457,27 +607,29 @@ export class World {
     normals.repeat.set(3, 3);
     const circle = new THREE.CircleGeometry(POND_RADIUS, Math.max(24, radial));
     circle.rotateX(-Math.PI / 2);
-    if (W >= 3) {
+    const mirrored = W >= 3 && this.perf < 2;
+    if (mirrored) {
+      const size = this.perf >= 1 ? 512 : 1024;
       const mirrorGeo = new THREE.CircleGeometry(POND_RADIUS, Math.max(24, radial));
-      const mirror = new Reflector(mirrorGeo, { textureWidth: 1024, textureHeight: 1024, color: 0x77808a, clipBias: 0.003 });
+      const mirror = new Reflector(mirrorGeo, { textureWidth: size, textureHeight: size, color: 0x77808a, clipBias: 0.003 });
       mirror.rotation.x = -Math.PI / 2;
       mirror.position.set(POND.x, y, POND.y);
       this.add(mirror);
       this.extras.push(mirror);
     }
     const surface = this.mat('metal', {
-      colour: W >= 3 ? 0x7fb0d0 : 0x1d5f96,
+      colour: mirrored ? 0x7fb0d0 : 0x1d5f96,
       textured: false,
       rough: 0.06,
       metal: 0.2,
       transparent: true,
-      opacity: W >= 3 ? 0.16 : 0.74,
+      opacity: mirrored ? 0.16 : 0.74,
       minLighting: 2,
     }) as THREE.MeshPhongMaterial | THREE.MeshStandardMaterial;
     surface.normalMap = normals;
     surface.normalScale = new THREE.Vector2(0.5, 0.5);
     surface.depthWrite = false;
-    if (W >= 3 && surface instanceof THREE.MeshStandardMaterial) surface.envMapIntensity = 0.15;
+    if (mirrored && surface instanceof THREE.MeshStandardMaterial) surface.envMapIntensity = 0.15;
     if (surface instanceof THREE.MeshPhongMaterial) {
       surface.shininess = 160;
       surface.specular.set(0xffffff);
@@ -505,13 +657,36 @@ export class World {
   private addSky(): void {
     const D = this.cfg.drawDistance;
     const L = this.cfg.lighting;
-    // The sun itself, bright enough to feed the bloom pass.
-    const sunMat = new THREE.MeshBasicMaterial({ fog: false });
-    sunMat.color.setRGB(6, 5.2, 3.6);
-    const sun = this.add(new THREE.Mesh(new THREE.SphereGeometry(9, 24, 16), sunMat));
-    sun.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE);
+    // Sky dome: gradient, sun and (at the better lighting tiers) drifting clouds.
+    const cloudAmount = L >= 3 ? [0, 0, 0.55, 0.7, 0.8][D] : 0;
+    const sky = new THREE.ShaderMaterial({
+      uniforms: {
+        uTop: { value: new THREE.Color(SKY_TOP) },
+        uHorizon: { value: new THREE.Color(SKY_HORIZON) },
+        uSunDir: { value: SUN_DIRECTION },
+        uSunColor: { value: new THREE.Color(1, 0.9, 0.66) },
+        uBands: { value: L === 1 ? 6 : 0 },
+        uFlat: { value: L === 0 ? 1 : 0 },
+        uClouds: { value: cloudAmount },
+        // An HDR sun feeds the bloom pass; the cheap tiers get a plain disc.
+        uSunPower: { value: L >= 2 ? 7 : 1.15 },
+        uGlow: { value: L >= 2 ? 1 : 0 },
+        uTime: this.time,
+      },
+      vertexShader: SkyShader.vertexShader,
+      fragmentShader: SkyShader.fragmentShader,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+    });
+    const dome = this.add(new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), sky));
+    dome.renderOrder = -1000;
+    dome.frustumCulled = false;
+    this.dome = dome;
 
-    if (D >= 2) {
+    // Below "physically based" lighting, clouds are just squashed spheres.
+    if (D >= 2 && L < 3) {
       const clouds = this.add(new THREE.Group());
       const cloudMat = L === 0 ? new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }) : new THREE.MeshLambertMaterial({ color: 0xffffff, fog: false, emissive: 0x556677 });
       const rand = rng(99);

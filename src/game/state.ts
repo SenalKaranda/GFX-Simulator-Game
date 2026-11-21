@@ -12,6 +12,10 @@ export interface Settings {
   /** Throttle the real render loop to the simulated frame rate. */
   authenticFps: boolean;
   autoRotate: boolean;
+  /** Quietly lower real rendering cost if the player's actual GPU cannot keep up. */
+  perfSaver: boolean;
+  /** Show the before/after wipe when a graphics upgrade is bought. */
+  wipe: boolean;
   buyAmount: 1 | 10 | -1;
 }
 
@@ -25,6 +29,8 @@ export interface Stats {
   fxToggles: number;
   offlineReturns: number;
   fastestGeneration: number;
+  hypes: number;
+  jumps: number;
 }
 
 export interface GameState {
@@ -45,6 +51,12 @@ export interface GameState {
   challengeTime: number;
   challengesDone: Record<ChallengeId, boolean>;
   achievements: Record<string, number>;
+  /** Play-time (seconds) at which the current hype boost ends / can be triggered again. */
+  hypeEnds: number;
+  hypeReadyAt: number;
+  /** Set once every upgrade has been owned at the same time. Survives prestige. */
+  gameplayUnlocked: boolean;
+  introSeen: boolean;
   stats: Stats;
   settings: Settings;
   lastSaved: number;
@@ -72,6 +84,10 @@ export function newState(): GameState {
     challengeTime: 0,
     challengesDone: record(CHALLENGES.map((x) => x.id), false),
     achievements: {},
+    hypeEnds: 0,
+    hypeReadyAt: 0,
+    gameplayUnlocked: false,
+    introSeen: false,
     stats: {
       clicks: 0,
       playTime: 0,
@@ -82,6 +98,8 @@ export function newState(): GameState {
       fxToggles: 0,
       offlineReturns: 0,
       fastestGeneration: 0,
+      hypes: 0,
+      jumps: 0,
     },
     settings: {
       sfx: true,
@@ -90,6 +108,8 @@ export function newState(): GameState {
       volume: 0.6,
       authenticFps: true,
       autoRotate: true,
+      perfSaver: true,
+      wipe: true,
       buyAmount: 1,
     },
     lastSaved: Date.now(),

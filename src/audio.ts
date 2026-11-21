@@ -173,6 +173,11 @@ export class Sound {
     [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => this.tone(f, now + 0.9 + i * 0.08, 0.6, 'triangle', 0.12, this.sfxBus));
   }
 
+  jump(): void {
+    if (!this.ready) return;
+    this.tone(260, this.ctx!.currentTime, 0.22, 'square', 0.07, this.sfxBus, 720);
+  }
+
   shutter(): void {
     if (!this.ready) return;
     const now = this.ctx!.currentTime;

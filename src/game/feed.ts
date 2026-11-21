@@ -1,7 +1,7 @@
 // The satirical layer: forum posts, patch notes and review scores.
-import { CHALLENGES, FX, GENERATORS, HARDWARE, trackById } from './data';
+import { CHALLENGES, FX, GENERATORS, HARDWARE, generationName, trackById } from './data';
 import type { GameEvent } from './logic';
-import { completion, simulatedFps } from './logic';
+import { completion, hypeRemaining, simulatedFps } from './logic';
 import type { GameState } from './state';
 
 export interface Post {
@@ -37,6 +37,18 @@ const IDLE: string[] = [
   'Does this have ultrawide support? I need to see more of the nothing.',
   'Please stop asking about gameplay, some of us are trying to look at shadows.',
   'Turned every setting to Ultra. Game is now a slideshow. Best slideshow I have ever seen.',
+  'My rig runs this at 14 FPS and I have never been happier.',
+  'Is the grass tessellated? I will not buy a game with untessellated grass.',
+  'Paid extra for early access to the graphics settings menu.',
+  'I only buy games I can use to justify my GPU.',
+  'They should remove the character so we can see more of the lighting.',
+  'Waiting for the analysis video before I decide what I think.',
+  'There is a 40 GB day-one patch that makes the shadows 3% softer. Downloading now.',
+  'Returned my copy because the puddles do not have puddles in them.',
+  'Do the rocks have subsurface scattering? Do not answer, I will zoom in.',
+  'Reminder that the human eye can only see 16K.',
+  'I have 900 hours in this. Mostly in the settings menu.',
+  'Honestly the loading screen was the best level.',
 ];
 
 const pick = <T>(list: T[]): T => list[Math.floor(Math.random() * list.length)];
@@ -56,6 +68,11 @@ export function idlePost(s: GameState): Post {
   if (s.tracks.resolution >= 6 && s.tracks.textures <= 1) contextual.push('Great, now I can see how bad the textures are in 4K.');
   if (s.fxOwned.brown && s.fxOn.brown) contextual.push('Finally, a realistic colour palette: brown, dark brown, and bloom.');
   if (s.fxOwned.motionBlur && s.fxOn.motionBlur) contextual.push('First thing I do in any game is turn off motion blur. Why is it still on?');
+  if (s.generators.nested > 0) contextual.push('The people inside the Nested Simulation have started their own forum. They are complaining about OUR frame rate.');
+  if (hypeRemaining(s) > 0) contextual.push('That screenshot is everywhere. Has anyone checked whether there is a game attached?');
+  if (s.gameplayUnlocked) contextual.push('I heard they added gameplay. Uninstalling until it is patched out.', 'The jump is fine, but is it ray traced?');
+  if (s.perks.framegen) contextual.push('Half of these frames are made up, and honestly they are the better half.');
+  if (s.challenge) contextual.push('Playing with a handicap? In a game with no gameplay? Respect.');
   if (s.generation >= 3) contextual.push(`Generation ${s.generation} already? I only just finished the shader compilation on the last one.`);
   return forum(contextual.length && Math.random() < 0.55 ? pick(contextual) : pick(IDLE));
 }
@@ -98,7 +115,7 @@ export function postFor(e: GameEvent, s: GameState): Post | null {
       return null;
     }
     case 'prestige':
-      return news(`Generation ${e.generation} launched! Last generation's graphics are now officially "dated". +${e.gained} Teraflops.`);
+      return news(`Generation ${e.generation} ("${generationName(e.generation)}") launched! Last generation's graphics are now officially "dated". +${e.gained} Teraflops.`);
     case 'challengeStart':
       return news(`Challenge accepted: ${CHALLENGES.find((c) => c.id === e.id)!.name}.`);
     case 'challengeComplete':
@@ -107,6 +124,23 @@ export function postFor(e: GameEvent, s: GameState): Post | null {
       return news(`Challenge failed: ${CHALLENGES.find((c) => c.id === e.id)!.name}. The speedrun community is disappointed.`);
     case 'deadPixel':
       return forum('Found a dead pixel. Filed a 14-page warranty claim.');
+    case 'hype':
+      return news('Your screenshot went viral. Hype: 2× pixels for 60 seconds. Nobody asked what the game is about.');
+    case 'ending':
+      return news('GFX Simulator has gone gold. The graphics are finished. As a reward, gameplay has been unlocked.');
+    case 'jump': {
+      const lines = [
+        'Wait. Was that... a mechanic?',
+        'The jump animation has 400 bones. I felt every one.',
+        'Jumping does nothing. Bold narrative choice.',
+        '0.7 seconds of gameplay. Bloated. Trim it.',
+        'Please patch out the gameplay, it is distracting from the hair.',
+        'Does the jump scale with resolution? Asking for a benchmark.',
+        'I preferred it when it was a tech demo.',
+      ];
+      if (e.count === 1) return forum(lines[0]);
+      return e.count % 8 === 0 ? forum(lines[1 + ((e.count / 8) % (lines.length - 1))]) : null;
+    }
     case 'gameplay':
       return { user: 'PRODUCER', text: gameplayResponse(e.count), kind: 'system' };
     default:
@@ -155,12 +189,13 @@ export function review(s: GameState): Review {
     'A new benchmark for benchmarks.',
     'Reality should be embarrassed.',
   ];
+  const jumps = s.stats.jumps;
   return {
     graphics,
-    gameplay: 'N/A',
-    story: 'Skipped',
+    gameplay: !s.gameplayUnlocked ? 'N/A' : jumps === 0 ? 'Unplayed' : jumps < 100 ? '1.0' : '1.1',
+    story: s.gameplayUnlocked ? 'Still skipped' : 'Skipped',
     performance: fps >= 55 ? 'Suspiciously smooth' : fps >= 24 ? 'Cinematic' : fps >= 5 ? 'Very cinematic' : 'Art-house',
     overall: graphics,
-    quote: quotes[Math.min(quotes.length - 1, Math.floor(c * quotes.length))],
+    quote: jumps > 0 ? 'There is a jump button now. It adds nothing. Graphics remain flawless.' : quotes[Math.min(quotes.length - 1, Math.floor(c * quotes.length))],
   };
 }

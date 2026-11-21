@@ -32,7 +32,7 @@ export interface Track {
  * the top; the rest needs Teraflops. Costs below the knee are used as written.
  */
 const KNEE = 1e8;
-const STRETCH = 1.35;
+const STRETCH = 1.6;
 export const steep = (cost: number): number => {
   if (cost <= KNEE) return cost;
   const v = KNEE * (cost / KNEE) ** STRETCH;
@@ -56,7 +56,7 @@ export const TRACKS: Track[] = [
       t('1080p', 3e8, 'Finally acceptable to forum users.'),
       t('4K', 6e10, 'Four whole Ks.'),
       t('8K', 2e13, 'Your monitor is 1080p. Buy it anyway.'),
-      t('16K Ultra-Mega HD', 2e16, 'More pixels than the human eye, the human brain, or the human wallet.'),
+      t('16K Ultra-Mega HD', 7e15, 'More pixels than the human eye, the human brain, or the human wallet.'),
     ],
   },
   {
@@ -121,7 +121,7 @@ export const TRACKS: Track[] = [
       t('Blob shadows', 2.5e3, 'A dark circle. Trust us, it is a shadow.'),
       t('Hard shadow maps', 3e5, 'Shadows with the edge quality of a staircase.'),
       t('Soft shadows', 1.2e8, 'Gently blurred at great expense.'),
-      t('Ray-traced contact shadows', 3e12, 'Shadows inside the shadows.'),
+      t('Ray-traced contact shadows', 2e12, 'Shadows inside the shadows.'),
     ],
   },
   {
@@ -179,7 +179,7 @@ export const TRACKS: Track[] = [
       t('Hair helmet', 3e4, 'One solid, immovable lump.'),
       t('Hair cards', 4e7, 'A hundred floppy strips.'),
       t('HairFX™', 1e11, 'Thousands of strands. Costs 40 FPS. Worth it.'),
-      t('Per-follicle simulation', 5e15, 'Every strand has a physics body and a backstory.'),
+      t('Per-follicle simulation', 3.5e15, 'Every strand has a physics body and a backstory.'),
     ],
   },
 ];
@@ -208,11 +208,11 @@ const FX_RAW: Fx[] = [
   { id: 'bloom', name: 'Bloom', cost: 1.5e5, desc: 'Everything glows, especially things that should not.' },
   { id: 'grain', name: 'Film Grain', cost: 8e6, desc: 'Simulates a camera that was never there.' },
   { id: 'chromatic', name: 'Chromatic Aberration', cost: 7e8, desc: 'Simulates a broken camera that was never there.' },
-  { id: 'motionBlur', name: 'Motion Blur', cost: 2e10, desc: 'Hides the frame rate you paid for.' },
+  { id: 'motionBlur', name: 'Motion Blur', cost: 1.2e10, desc: 'Hides the frame rate you paid for.' },
   { id: 'lensFlare', name: 'Lens Flare', cost: 5e11, desc: 'A director once liked these.' },
   { id: 'dof', name: 'Depth of Field', cost: 8e12, desc: 'Blurs 80% of the detail you just bought.' },
   { id: 'brown', name: 'Realistic Colour Grading', cost: 3e14, desc: 'Real life is brown. Now so is the game.' },
-  { id: 'lensDirt', name: 'Lens Dirt', cost: 4e15, desc: 'Your eyeballs are apparently a filthy camera.' },
+  { id: 'lensDirt', name: 'Lens Dirt', cost: 1.8e15, desc: 'Your eyeballs are apparently a filthy camera.' },
 ];
 
 export const FX: Fx[] = FX_RAW.map((f) => ({ ...f, cost: steep(f.cost) }));
@@ -241,6 +241,8 @@ export const GENERATORS: Generator[] = [
   { id: 'upscaler', name: 'AI Upscaler', baseCost: 1.5e9, baseRate: 2.6e5, desc: 'Invents detail that was never there. Mostly fingers.' },
   { id: 'quantum', name: 'Quantum GPU Cluster', baseCost: 4e10, baseRate: 2.5e6, desc: 'Renders every possible frame at once. Ships none.' },
   { id: 'reality', name: 'Reality Scanner', baseCost: 1.5e12, baseRate: 2.8e7, desc: 'Just points a camera out of the window.' },
+  { id: 'planet', name: 'Server Planet', baseCost: 6e13, baseRate: 3.4e8, desc: 'An entire world of render nodes. The weather there is now "warm".' },
+  { id: 'nested', name: 'Nested Simulation', baseCost: 3e15, baseRate: 4.5e9, desc: 'A simulated universe whose inhabitants render your grass. They have forum complaints too.' },
 ];
 
 export interface Hardware {
@@ -260,13 +262,13 @@ const HARDWARE_RAW: Hardware[] = [
   { name: 'RTZ 4080', cost: 1e9, power: 250, click: 40, desc: 'Needs its own support bracket.' },
   { name: 'RTZ 6090 Ti', cost: 2e11, power: 2500, click: 200, desc: 'Draws 900 W. Doubles as a space heater.' },
   { name: 'RTZ 9090 Ti Super', cost: 1e14, power: 20000, click: 1200, desc: 'Ships with a dedicated substation.' },
-  { name: 'Dyson Sphere Edition', cost: 1e17, power: 80000, click: 10000, desc: 'Harvests a star to render your grass.' },
+  { name: 'Dyson Sphere Edition', cost: 1.5e16, power: 80000, click: 10000, desc: 'Harvests a star to render your grass.' },
 ];
 
 export const HARDWARE: Hardware[] = HARDWARE_RAW.map((h) => ({ ...h, cost: steep(h.cost) }));
 
 /** Each owned graphics tier / enabled effect multiplies production and GPU load by these. */
-export const FIDELITY_INCOME_MULT = 1.12;
+export const FIDELITY_INCOME_MULT = 1.15;
 export const FIDELITY_LOAD_MULT = 1.22;
 export const BASE_FPS = 75;
 export const FPS_CAP = 60;
@@ -306,13 +308,22 @@ export interface Challenge {
 
 /** Challenges restart the generation under a handicap; finishing gives a permanent reward. */
 export const CHALLENGES: Challenge[] = [
-  { id: 'noclick', name: 'Walking Simulator', rule: 'Clicking the scene earns nothing.', goal: 22, reward: 'Clicks are worth 5× forever.' },
-  { id: 'solo', name: 'Solo Dev', rule: 'You may only hire Unpaid Interns.', goal: 16, reward: 'Interns produce 25× forever.' },
+  { id: 'noclick', name: 'Walking Simulator', rule: 'Clicking the scene earns nothing.', goal: 28, reward: 'Clicks are worth 5× forever.' },
+  { id: 'solo', name: 'Solo Dev', rule: 'You may only hire Unpaid Interns.', goal: 20, reward: 'Interns produce 25× forever.' },
   { id: 'indie', name: 'Indie Budget', rule: 'Staff cost 10× as much.', goal: 24, reward: 'Staff are 15% cheaper forever.' },
-  { id: 'patch', name: 'Day-One Patch', rule: 'All production is divided by 20.', goal: 24, reward: '+50% pixels forever.' },
-  { id: 'console', name: 'Console Port', rule: 'Resolution is locked at 320 × 180 and the GPU cannot be upgraded.', goal: 20, reward: 'GPU power is doubled forever.' },
-  { id: 'speedrun', name: 'Any% Fidelity', rule: 'Reach the goal within 8 minutes.', goal: 22, timeLimit: 480, reward: 'Teraflop gains +25% forever.' },
+  { id: 'patch', name: 'Day-One Patch', rule: 'All production is divided by 6.', goal: 20, reward: '+50% pixels forever.' },
+  { id: 'console', name: 'Console Port', rule: 'Resolution is locked at 320 × 180 and the GPU cannot be upgraded.', goal: 26, reward: 'GPU power is doubled forever.' },
+  { id: 'speedrun', name: 'Any% Fidelity', rule: 'Reach the goal within 8 minutes.', goal: 30, timeLimit: 480, reward: 'Teraflop gains +25% forever.' },
 ];
+
+const GENERATION_NAMES = [
+  'Launch Model', 'The Slim', 'The Pro', 'Pro Max', 'Series Y, Model Z', 'The 4K One', 'Digital Edition',
+  'Elite Ultra', 'The One Without A Disc Drive', 'Anniversary Remaster',
+];
+
+/** Every console generation needs a name that makes the last one sound obsolete. */
+export const generationName = (generation: number): string =>
+  GENERATION_NAMES[generation - 1] ?? `Mark ${generation}`;
 
 export const RANKS: { at: number; name: string }[] = [
   { at: 0, name: 'Potato' },

@@ -33,14 +33,23 @@ export type GameEvent =
   | { type: 'achievement'; id: string }
   | { type: 'click'; value: number }
   | { type: 'deadPixel'; value: number }
+  | { type: 'hype' }
+  | { type: 'ending' }
+  | { type: 'jump'; count: number }
   | { type: 'gameplay'; count: number };
 
 export type Listener = (e: GameEvent) => void;
 
 const ACH_BONUS = 0.02;
 const ACH_BONUS_COLLECTOR = 0.05;
-export const TERAFLOP_BONUS = 0.1;
+export const TERAFLOP_BONUS = 0.05;
+/** Pixels earned in a generation before the first Teraflop is awarded. */
+export const TERAFLOP_THRESHOLD = 1e7;
 export const OFFLINE_CAP_SECONDS = 8 * 3600;
+/** A screenshot going viral: production multiplier, how long it lasts, and how often. */
+export const HYPE_MULT = 2;
+export const HYPE_DURATION = 60;
+export const HYPE_COOLDOWN = 300;
 
 export function enabledFxCount(s: GameState): number {
   return FX.reduce((n, fx) => n + (s.fxOwned[fx.id] && s.fxOn[fx.id] ? 1 : 0), 0);
@@ -108,7 +117,7 @@ export function globalMultiplier(s: GameState): number {
   m *= 1 + (s.perks.collector ? ACH_BONUS_COLLECTOR : ACH_BONUS) * achievementCount(s);
   m *= fpsFactor(s);
   if (s.challengesDone.patch) m *= 1.5;
-  if (s.challenge === 'patch') m /= 20;
+  if (s.challenge === 'patch') m /= 6;
   return m;
 }
 
@@ -127,17 +136,62 @@ export function generatorRate(s: GameState, g: Generator): number {
   return rate * globalMultiplier(s);
 }
 
-export function pixelsPerSecond(s: GameState): number {
+export function hypeRemaining(s: GameState): number {
+  return Math.max(0, s.hypeEnds - s.stats.playTime);
+}
+
+export function hypeCooldown(s: GameState): number {
+  return Math.max(0, s.hypeReadyAt - s.stats.playTime);
+}
+
+const hypeMultiplier = (s: GameState): number => (hypeRemaining(s) > 0 ? HYPE_MULT : 1);
+
+/** Staff production before any temporary hype boost. */
+export function basePixelsPerSecond(s: GameState): number {
   let total = 0;
   for (const g of GENERATORS) total += generatorRate(s, g);
   return total;
 }
 
-export function clickValue(s: GameState): number {
+export function pixelsPerSecond(s: GameState): number {
+  return basePixelsPerSecond(s) * hypeMultiplier(s);
+}
+
+function baseClickValue(s: GameState): number {
   if (s.challenge === 'noclick') return 0;
-  let v = HARDWARE[s.hardware].click * globalMultiplier(s) + 0.04 * pixelsPerSecond(s);
+  let v = HARDWARE[s.hardware].click * globalMultiplier(s) + 0.04 * basePixelsPerSecond(s);
   if (s.challengesDone.noclick) v *= 5;
   return v;
+}
+
+export function clickValue(s: GameState): number {
+  return baseClickValue(s) * hypeMultiplier(s);
+}
+
+export interface NextGoal {
+  kind: 'track' | 'fx' | 'hardware';
+  id: string;
+  label: string;
+  cost: number;
+}
+
+/** The cheapest graphics purchase still available: what the player should aim for next. */
+export function nextGoal(s: GameState): NextGoal | null {
+  let best: NextGoal | null = null;
+  const consider = (g: NextGoal): void => {
+    if (!best || g.cost < best.cost) best = g;
+  };
+  for (const tr of TRACKS) {
+    const cost = nextTrackCost(s, tr.id);
+    if (cost === null || trackLocked(s, tr.id)) continue;
+    consider({ kind: 'track', id: tr.id, label: `${tr.name}: ${tr.tiers[s.tracks[tr.id] + 1].name}`, cost });
+  }
+  for (const fx of FX) {
+    if (!s.fxOwned[fx.id]) consider({ kind: 'fx', id: fx.id, label: fx.name, cost: fxCost(s, fx.id) });
+  }
+  const hw = HARDWARE[s.hardware + 1];
+  if (hw && s.challenge !== 'console') consider({ kind: 'hardware', id: 'gpu', label: `GPU: ${hw.name}`, cost: hw.cost });
+  return best;
 }
 
 const graphicsDiscount = (s: GameState): number => (s.perks.licence ? 0.6 : 1);
@@ -181,7 +235,7 @@ export function maxAffordable(s: GameState, g: Generator): number {
 
 /** Teraflops awarded for launching the next generation right now. */
 export function teraflopGain(s: GameState): number {
-  const base = (s.runEarned / 1e8) ** 0.2;
+  const base = (s.runEarned / TERAFLOP_THRESHOLD) ** 0.12;
   if (base < 1) return 0;
   return Math.floor(base * (s.challengesDone.speedrun ? 1.25 : 1));
 }
@@ -215,9 +269,15 @@ export class Game {
   /** Advance the simulation by `dt` seconds. */
   tick(dt: number): void {
     const s = this.state;
-    this.earn(pixelsPerSecond(s) * dt);
-    if (s.perks.macro) this.earn(clickValue(s) * 4 * dt);
+    // Hype may run out part-way through a long tick, so weight only the hyped seconds.
+    const effective = dt + Math.min(dt, hypeRemaining(s)) * (HYPE_MULT - 1);
+    this.earn(basePixelsPerSecond(s) * effective);
+    if (s.perks.macro) this.earn(baseClickValue(s) * 4 * effective);
     s.stats.playTime += dt;
+    if (!s.gameplayUnlocked && upgradeCount(s) >= TOTAL_GRAPHICS_UPGRADES) {
+      s.gameplayUnlocked = true;
+      this.emit({ type: 'ending' });
+    }
     s.stats.runTime += dt;
     if (s.challenge) {
       s.challengeTime += dt;
@@ -361,6 +421,26 @@ export class Game {
     this.emit({ type: 'challengeAbandon', id });
   }
 
+  /** Record a screenshot. Returns true if it went viral and started a hype boost. */
+  takePhoto(): boolean {
+    const s = this.state;
+    s.stats.photos++;
+    if (hypeCooldown(s) > 0) return false;
+    s.hypeEnds = s.stats.playTime + HYPE_DURATION;
+    s.hypeReadyAt = s.stats.playTime + HYPE_COOLDOWN;
+    s.stats.hypes++;
+    this.emit({ type: 'hype' });
+    return true;
+  }
+
+  /** The gameplay. All of it. */
+  jump(): boolean {
+    const s = this.state;
+    if (!s.gameplayUnlocked) return false;
+    this.emit({ type: 'jump', count: ++s.stats.jumps });
+    return true;
+  }
+
   requestGameplay(): number {
     const count = ++this.state.stats.gameplayRequests;
     this.emit({ type: 'gameplay', count });
@@ -378,7 +458,7 @@ export class Game {
     const s = this.state;
     const seconds = Math.min(OFFLINE_CAP_SECONDS, (now - s.lastSaved) / 1000);
     if (!(seconds > 60)) return null;
-    const earned = pixelsPerSecond(s) * seconds * (s.perks.crunch ? 1 : 0.25);
+    const earned = basePixelsPerSecond(s) * seconds * (s.perks.crunch ? 1 : 0.25);
     if (earned <= 0) return null;
     this.earn(earned);
     if (s.challenge) s.challengeTime += seconds;

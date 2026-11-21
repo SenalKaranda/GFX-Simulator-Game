@@ -21,7 +21,7 @@
         </div>
         <div class="topbar-actions">
           <div class="tf-chip" id="tf-chip" hidden><b id="tf">0</b> TF</div>
-          <button class="icon-btn" id="btn-photo" title="Photo mode (P)" aria-label="Photo mode">◉</button>
+          <button class="icon-btn" id="btn-photo" title="Photo mode (P)" aria-label="Photo mode">◉<i class="cooldown" id="photo-cooldown"></i></button>
           <button class="icon-btn" id="btn-mute" title="Mute everything (M)" aria-label="Mute">♪</button>
         </div>
       </header>
@@ -29,12 +29,19 @@
       <main class="layout">
         <section class="stage">
           <div class="viewport" id="viewport">
+            <div class="wipe" id="wipe" hidden>
+              <canvas id="wipe-canvas"></canvas>
+              <span class="wipe-tag">BEFORE</span>
+            </div>
+            <div class="wipe-line" id="wipe-line" hidden><span class="wipe-tag">AFTER</span></div>
             <div class="hud hud-tl">
               <div class="fps" id="fps">60 FPS</div>
               <div class="res" id="res">64 × 36</div>
+              <div class="res penalty" id="fps-penalty" hidden></div>
             </div>
             <div class="hud hud-tr">
               <div class="badge" id="rt-badge" hidden>RAYS: TRACED</div>
+              <div class="badge badge-hype" id="hype-badge" hidden></div>
               <div class="badge badge-warn" id="challenge-badge" hidden></div>
             </div>
             <div class="hud hud-bottom">
@@ -43,9 +50,16 @@
             </div>
             <div class="hint" id="hint">Click the scene to render pixels</div>
             <button class="dead-pixel" id="dead-pixel" hidden aria-label="Dead pixel"></button>
+            <button class="jump-btn" id="btn-jump" hidden>JUMP <small>space</small></button>
             <div class="floaters" id="floaters"></div>
           </div>
 
+          <button class="goal" id="goal" title="Buy the next upgrade (B)">
+            <span class="goal-k">NEXT</span>
+            <span class="goal-name" id="goal-name"></span>
+            <span class="goal-bar"><i id="goal-fill"></i></span>
+            <span class="goal-eta" id="goal-eta"></span>
+          </button>
           <div class="review" id="review"></div>
           <div class="feed" id="feed" aria-live="off"></div>
         </section>

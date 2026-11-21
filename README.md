@@ -29,23 +29,47 @@ npm run build
 - **Click the scene** to render pixels by hand. Drag to orbit, scroll to zoom.
 - **Graphics tab** – 11 settings (resolution, colour depth, polygons, textures,
   lighting, shadows, anti-aliasing, draw distance, foliage, water, hair) plus 9
-  post-processing effects: 60 upgrades in total. Each gives +12% pixels and
+  post-processing effects: 60 upgrades in total. Each gives +15% pixels and
   costs 18% of your frame rate. Effects only count while switched on, so yes,
-  you have to look at the motion blur.
+  you have to look at the motion blur. Every purchase plays a before/after
+  comparison wipe.
+- **Next-upgrade bar** – under the scene, always showing the cheapest
+  outstanding upgrade, progress towards it and an ETA. Click it (or press `B`)
+  to buy.
 - **GPU** – better hardware restores the frame rate. Low FPS cuts production by
   up to half, and (optionally) the scene really is rendered at that frame rate.
-- **Studio tab** – hire staff who render pixels for you, including while the
-  tab is closed (25% efficiency, up to 8 hours).
+- **Studio tab** – hire 12 kinds of staff who render pixels for you, including
+  while the tab is closed (25% efficiency, up to 8 hours).
+- **Photo mode** (`P`) – export a stamped screenshot. A fresh screenshot "goes
+  viral": 2× pixels for 60 seconds, once every 5 minutes.
 - **Next-Gen tab** – scrap everything to launch the next console generation and
-  earn Teraflops (+10% pixels each, forever). Spend them on permanent perks.
+  earn Teraflops (+5% pixels each, forever). Spend them on permanent perks.
   From generation 2, six **challenges** restart the run under a handicap for a
   permanent reward.
-- **Trophies** – 56 achievements, some secret, each worth +2% pixels.
-- **Photo mode** (`P`) – export a stamped screenshot. `M` mutes everything.
+- **Trophies** – 61 achievements, some secret, each worth +2% pixels.
+- **An ending** – own all 60 upgrades at once and the credits roll. There is a
+  reward. It is not worth it.
 - Also: dead pixels to catch, a forum that reacts to what you buy, review
   scores that ignore everything except graphics, and a "request gameplay" button.
 
+Shortcuts: `B` buy next upgrade · `P` photo · `M` mute · `1`–`5` switch tab.
+
 Progress saves to `localStorage` automatically; export/import is under Options.
+
+## Performance saver
+
+The top tiers are deliberately wasteful (planar reflections, depth of field,
+4096 px shadows, ~100k instanced blades and strands). To keep that a joke
+rather than a crash, the renderer watches how long real frames take:
+
+- It never spends more than about half of real time rendering, so the
+  interface stays responsive however slow the device is.
+- If most recent frames were slow it steps through three levels that cut real
+  cost (pixel ratio, shadow resolution, instance counts, the extra reflection
+  and depth passes, and finally internal resolution).
+
+None of this changes what the player owns or their score. It can be switched
+off under Options → Display ("Protect my real GPU").
 
 ## Project layout
 
@@ -68,9 +92,13 @@ generated at runtime.
 
 ## Balancing
 
-`npm run sim` plays the game with a greedy bot and prints when it reaches each
-milestone. With the current numbers an optimal player first launches a new
-generation after roughly 50 minutes and maxes everything in about 4 hours over
-8 generations; a human will be slower. Costs live in `src/game/data.ts`
-(`steep()` stretches late-game prices) and the prestige formula is
-`teraflopGain()` in `src/game/logic.ts`.
+`npm run sim` plays the game with a greedy bot and prints the pacing; add
+`MODE=challenges` to time each challenge at three stages of progress, or
+`MODE=summary` for one line. With the current numbers the bot launches its
+first new generation after about 35 minutes, then one every 16–28 minutes,
+and owns everything in generation 8 after about 3 hours. A human will be
+slower. Challenges take roughly 10–40 minutes when first attempted; the timed
+one cannot be done on the first try.
+
+Costs live in `src/game/data.ts` (`steep()` stretches late-game prices) and
+the prestige formula is `teraflopGain()` in `src/game/logic.ts`.

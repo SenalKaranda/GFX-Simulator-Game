@@ -77,10 +77,15 @@ export const ACHIEVEMENTS: Achievement[] = [
   a('gameplay100', 'It Was Never About The Gameplay', 'Ask for gameplay 100 times.', (s) => s.stats.gameplayRequests >= 100, true),
   a('photo1', 'Bullshot', 'Take a screenshot in Photo Mode.', (s) => s.stats.photos >= 1),
   a('photo10', 'Virtual Photographer', 'Take 10 screenshots. Playing the game is optional.', (s) => s.stats.photos >= 10),
+  a('hype1', 'Going Viral', 'Start a hype boost by taking a screenshot.', (s) => s.stats.hypes >= 1),
+  a('hype10', 'Influencer', 'Go viral 10 times.', (s) => s.stats.hypes >= 10),
   a('dead1', 'Stuck Pixel', 'Catch a dead pixel.', (s) => s.stats.deadPixels >= 1),
   a('dead20', 'Warranty Claim', 'Catch 20 dead pixels.', (s) => s.stats.deadPixels >= 20),
   a('offline', 'Overnight Render', 'Come back to pixels earned while you were away.', (s) => s.stats.offlineReturns >= 1),
   a('hour1', 'Sunk Cost', 'Play for one hour.', (s) => s.stats.playTime >= 3600),
+  a('ending', 'Gold Master', 'Finish the graphics. Unlock the gameplay.', (s) => s.gameplayUnlocked),
+  a('jump1', 'Emergent Gameplay', 'Play the game.', (s) => s.stats.jumps >= 1, true),
+  a('jump100', 'Platformer Of The Year', 'Jump 100 times. There is still nothing to jump over.', (s) => s.stats.jumps >= 100, true),
   a('silent', 'Silent Protagonist', 'Mute sound effects, music and the GPU fan.', (s) => !s.settings.sfx && !s.settings.music && !s.settings.fan, true),
 ];
 

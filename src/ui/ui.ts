@@ -3,15 +3,15 @@
 import { ACHIEVEMENTS } from '../game/achievements';
 import {
   CHALLENGES, FIDELITY_INCOME_MULT, FIDELITY_LOAD_MULT, FX, GENERATORS, GENERATOR_MILESTONES, HARDWARE, PERKS,
-  TOTAL_GRAPHICS_UPGRADES, TRACKS,
+  TOTAL_GRAPHICS_UPGRADES, TRACKS, generationName,
 } from '../game/data';
 import type { ChallengeId, FxId, PerkId, TrackId } from '../game/data';
 import { review } from '../game/feed';
 import type { Post } from '../game/feed';
 import {
-  TERAFLOP_BONUS, achievementCount, clickValue, completion, fidelityScore, fxCost, generatorCost, generatorLocked,
-  generatorRate, maxAffordable, nextTrackCost, pixelsPerSecond, rankName, simulatedFps, teraflopGain, trackLocked,
-  upgradeCount,
+  TERAFLOP_BONUS, TERAFLOP_THRESHOLD, achievementCount, clickValue, completion, fidelityScore, fpsFactor, fxCost,
+  generatorCost, generatorLocked, generatorRate, hypeCooldown, hypeRemaining, maxAffordable, nextGoal, nextTrackCost,
+  pixelsPerSecond, rankName, simulatedFps, teraflopGain, trackLocked, upgradeCount,
 } from '../game/logic';
 import type { Game } from '../game/logic';
 import { fmt, fmtFps, fmtTime } from './format';
@@ -33,6 +33,9 @@ export interface UIHooks {
   importSave(text: string): boolean;
   hardReset(): void;
   resolutionLabel(): string;
+  /** Current performance-saver level (0 = full quality). */
+  perfLevel(): number;
+  jump(): void;
 }
 
 interface ModalAction {
@@ -72,8 +75,11 @@ export class UI {
     this.body.addEventListener('click', (e) => this.onAction(e));
     this.body.addEventListener('input', (e) => this.onInput(e));
     $('review').addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('[data-action="gameplay"]')) this.game.requestGameplay();
+      if (!(e.target as HTMLElement).closest('[data-action="gameplay"]')) return;
+      if (this.game.state.gameplayUnlocked) this.hooks.jump();
+      else this.game.requestGameplay();
     });
+    $('goal').addEventListener('click', () => this.buyGoal());
     $('modal-root').addEventListener('click', (e) => {
       if (e.target === e.currentTarget && !(e.currentTarget as HTMLElement).dataset.sticky) this.closeModal();
     });
@@ -85,6 +91,33 @@ export class UI {
   /** Mark the active tab for a full re-render on the next tick. */
   invalidate(): void {
     this.dirty = true;
+  }
+
+  selectTab(index: number): void {
+    const tab = TABS[index];
+    if (!tab) return;
+    this.tab = tab.id;
+    this.body.scrollTop = 0;
+    this.invalidate();
+    this.tick();
+  }
+
+  /** Buy the cheapest outstanding graphics upgrade, if it can be afforded. */
+  buyGoal(): void {
+    const g = this.game;
+    const goal = nextGoal(g.state);
+    if (!goal) return;
+    const ok = goal.kind === 'track' ? g.buyTrack(goal.id as TrackId) : goal.kind === 'fx' ? g.buyFx(goal.id as FxId) : g.buyHardware();
+    if (ok) this.sounds.upgrade();
+    else {
+      this.sounds.deny();
+      const el = $('goal');
+      el.classList.remove('shake');
+      void el.offsetWidth;
+      el.classList.add('shake');
+    }
+    this.invalidate();
+    this.tick();
   }
 
   // ------------------------------------------------------------------ actions
@@ -133,7 +166,7 @@ export class UI {
         g.abandonChallenge();
         break;
       case 'toggle': {
-        const key = id as 'sfx' | 'music' | 'fan' | 'authenticFps' | 'autoRotate';
+        const key = id as 'sfx' | 'music' | 'fan' | 'authenticFps' | 'autoRotate' | 'perfSaver' | 'wipe';
         s.settings[key] = !s.settings[key];
         this.hooks.settingsChanged();
         break;
@@ -151,7 +184,8 @@ export class UI {
         ]);
         break;
       case 'gameplay':
-        g.requestGameplay();
+        if (s.gameplayUnlocked) this.hooks.jump();
+        else g.requestGameplay();
         break;
       case 'photo':
         this.hooks.photo();
@@ -185,7 +219,7 @@ export class UI {
     this.modal(
       `Launch Generation ${s.generation + 1}?`,
       `<p>Last generation's graphics become embarrassing overnight. You lose <b>all pixels, graphics settings, effects, staff and your GPU</b>.</p>
-       <p>You keep trophies, perks and challenge rewards, and gain <b class="tf-text">+${fmt(gain)} Teraflops</b> (each one is +${Math.round(TERAFLOP_BONUS * 100)}% pixels, forever).</p>
+       <p>You keep trophies, perks and challenge rewards, and gain <b class="tf-text">+${fmt(gain)} Teraflops</b> (each one is +${Math.round(TERAFLOP_BONUS * 100)}% pixels, forever). The longer you wait, the more you get.</p>
        ${s.challenge ? '<p class="warn">Your active challenge will be abandoned.</p>' : ''}`,
       [{ label: 'Not yet' }, { label: 'Launch it', primary: true, onClick: () => this.game.prestige() }],
     );
@@ -324,6 +358,21 @@ export class UI {
     $('fidelity-bar').style.width = `${(completion(s) * 100).toFixed(1)}%`;
     $('rt-badge').hidden = s.tracks.lighting < 5;
     $('hint').hidden = s.stats.clicks >= 3;
+    const factor = fpsFactor(s);
+    const penalty = $('fps-penalty');
+    penalty.hidden = factor > 0.995;
+    penalty.textContent = `production ×${factor.toFixed(2)}`;
+    const hype = hypeRemaining(s);
+    const hypeBadge = $('hype-badge');
+    hypeBadge.hidden = hype <= 0;
+    hypeBadge.textContent = `HYPE ×2 · ${Math.ceil(hype)}s`;
+    const cooldown = hypeCooldown(s);
+    const photoBtn = $('btn-photo');
+    photoBtn.classList.toggle('ready', cooldown <= 0);
+    photoBtn.title = cooldown <= 0 ? 'Photo mode (P): a fresh screenshot will go viral' : `Photo mode (P): next viral screenshot in ${fmtTime(cooldown)}`;
+    $('photo-cooldown').style.height = `${Math.min(100, (cooldown / 300) * 100)}%`;
+    $('btn-jump').hidden = !s.gameplayUnlocked;
+    this.renderGoal();
     const badge = $('challenge-badge');
     badge.hidden = !s.challenge;
     if (s.challenge) {
@@ -342,11 +391,38 @@ export class UI {
     this.refreshTabDots();
   }
 
+  private renderGoal(): void {
+    const s = this.game.state;
+    const goal = nextGoal(s);
+    const el = $('goal');
+    if (!goal) {
+      el.classList.remove('ready');
+      el.classList.add('done');
+      $('goal-name').textContent = 'Everything is maxed. There is nothing left to improve.';
+      $('goal-eta').textContent = '';
+      $('goal-fill').style.width = '100%';
+      return;
+    }
+    const ready = s.pixels + 1e-9 >= goal.cost;
+    el.classList.toggle('ready', ready);
+    el.classList.remove('done');
+    $('goal-name').textContent = goal.label;
+    $('goal-fill').style.width = `${Math.min(100, (s.pixels / goal.cost) * 100).toFixed(1)}%`;
+    const pps = pixelsPerSecond(s);
+    let eta = 'click the scene';
+    if (ready) eta = 'BUY';
+    else if (pps > 0) {
+      const seconds = (goal.cost - s.pixels) / pps;
+      eta = seconds > 86400 ? 'a long time' : fmtTime(seconds);
+    }
+    $('goal-eta').textContent = `${fmt(goal.cost)} px · ${eta}`;
+  }
+
   private renderReview(): void {
     const r = review(this.game.state);
     const html = `
       <div class="score"><small>Graphics</small><b>${r.graphics}</b></div>
-      <div class="score score-na"><small>Gameplay</small><b>${r.gameplay}</b><button class="link" data-action="gameplay">request</button></div>
+      <div class="score score-na"><small>Gameplay</small><b>${r.gameplay}</b><button class="link" data-action="gameplay">${this.game.state.gameplayUnlocked ? 'play' : 'request'}</button></div>
       <div class="score score-na"><small>Story</small><b>${r.story}</b></div>
       <div class="score"><small>Performance</small><b class="small">${r.performance}</b></div>
       <div class="score score-total"><small>Overall</small><b>${r.overall}</b></div>
@@ -384,7 +460,7 @@ export class UI {
         btn.classList.toggle('cant', gain < 1);
         btn.innerHTML = gain >= 1
           ? `Launch Generation ${s.generation + 1}<small>+${fmt(gain)} Teraflops</small>`
-          : `Launch Generation ${s.generation + 1}<small>needs ${fmt(1e8)} px earned this generation (${fmt(s.runEarned)})</small>`;
+          : `Launch Generation ${s.generation + 1}<small>needs ${fmt(TERAFLOP_THRESHOLD)} px earned this generation (${fmt(s.runEarned)} so far)</small>`;
       }
     }
     if (this.tab === 'options') {
@@ -500,9 +576,24 @@ export class UI {
     const picker = amounts
       .map(([n, label]) => `<button class="seg ${s.settings.buyAmount === n ? 'on' : ''}" data-action="amount" data-id="${n}">${label}</button>`)
       .join('');
-    const rows = GENERATORS.map((g) => {
+    // Reveal staff as they come within reach, plus one teaser for whatever is next.
+    let teased = false;
+    const rows = GENERATORS.map((g, index) => {
       const owned = s.generators[g.id];
       const locked = generatorLocked(s, g.id);
+      const revealed = owned > 0 || index < 2 || s.runEarned >= g.baseCost * 0.15 || s.generation > 1;
+      if (!revealed) {
+        if (teased) return '';
+        teased = true;
+        return `
+        <div class="row row-off">
+          <div class="row-count">?</div>
+          <div class="row-main">
+            <div class="row-title">???</div>
+            <div class="row-now">Someone even more expensive. Revealed once you have earned ${fmt(g.baseCost * 0.15)} px this generation.</div>
+          </div>
+        </div>`;
+      }
       const total = generatorRate(s, g);
       const nextMilestone = GENERATOR_MILESTONES.find((m) => owned < m);
       // Preview the rate of one unit even when none are owned yet.
@@ -524,7 +615,7 @@ export class UI {
         </div>`;
     }).join('');
     return `
-      <p class="note">Staff render pixels while you admire the puddles. They keep working (at reduced pay) when the tab is closed.</p>
+      <p class="note">Staff render pixels while you admire the puddles. They keep working (at reduced pay) when the tab is closed. Every 10, 25, 50, 100… of one kind doubles its output.</p>
       <div class="segmented">${picker}</div>
       ${rows}`;
   }
@@ -564,7 +655,7 @@ export class UI {
 
     return `
       <div class="card card-gen">
-        <div class="gen-number">GEN ${s.generation}</div>
+        <div class="gen-number">GEN ${s.generation}<small>${generationName(s.generation)}</small></div>
         <p>Scrap this console generation and start again with <b>Teraflops</b>: each one you have ever earned gives +${Math.round(TERAFLOP_BONUS * 100)}% pixels.</p>
         <p class="tf-line"><b class="tf-text">${fmt(s.teraflops)} TF</b> to spend · ${fmt(s.teraflopsTotal)} earned in total (+${fmt(s.teraflopsTotal * TERAFLOP_BONUS * 100)}% pixels)</p>
         <button class="btn btn-primary btn-wide" data-action="prestige"></button>
@@ -604,7 +695,11 @@ export class UI {
         <input type="range" min="0" max="100" value="${Math.round(s.settings.volume * 100)}" data-input="volume" aria-label="Volume" /></div>
       <h3>Display</h3>
       ${toggle('authenticFps', 'Authentic frame rate', 'Really render the scene at the simulated FPS. Turn off if the slideshow hurts.', s.settings.authenticFps)}
+      ${toggle('wipe', 'Before / after wipe', 'Compare the old and new render every time you buy an upgrade.', s.settings.wipe)}
       ${toggle('autoRotate', 'Auto-rotate camera', 'Drag the scene to look around; scroll to zoom.', s.settings.autoRotate)}
+      ${toggle('perfSaver', 'Protect my real GPU', `If this device cannot keep up, quietly lower the real detail. Your fidelity score is unaffected.${this.hooks.perfLevel() > 0 ? ` <b>Active (level ${this.hooks.perfLevel()} of 3).</b>` : ''}`, s.settings.perfSaver)}
+      <h3>Shortcuts</h3>
+      <p class="note"><b>B</b> buy the next upgrade · <b>P</b> photo mode · <b>M</b> mute · <b>1–5</b> switch tab${s.gameplayUnlocked ? ' · <b>Space</b> gameplay' : ''}</p>
       <h3>Statistics</h3>
       <dl class="stats">
         <dt>Time played</dt><dd data-stat="time">${fmtTime(st.playTime)}</dd>
@@ -613,8 +708,9 @@ export class UI {
         <dt>Console generation</dt><dd>${s.generation}</dd>
         <dt>Dead pixels caught</dt><dd>${st.deadPixels}</dd>
         <dt>Screenshots taken</dt><dd>${st.photos}</dd>
+        <dt>Viral screenshots</dt><dd>${st.hypes}</dd>
         <dt>Gameplay requests denied</dt><dd>${st.gameplayRequests}</dd>
-        <dt>Gameplay</dt><dd>0</dd>
+        <dt>Gameplay</dt><dd>${s.gameplayUnlocked ? `${st.jumps} jump${st.jumps === 1 ? '' : 's'}` : '0'}</dd>
       </dl>
       <h3>Save</h3>
       <p class="note">The game saves to this browser automatically.</p>

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ACHIEVEMENTS } from '../src/game/achievements';
 import { CHALLENGES, FX, GENERATORS, HARDWARE, TOTAL_GRAPHICS_UPGRADES, TRACKS } from '../src/game/data';
 import {
-  Game, clickValue, generatorCost, maxAffordable, nextTrackCost, pixelsPerSecond, simulatedFps, teraflopGain, upgradeCount,
+  Game, HYPE_COOLDOWN, HYPE_DURATION, HYPE_MULT, clickValue, generatorCost, hypeRemaining, maxAffordable, nextGoal,
+  nextTrackCost, pixelsPerSecond, simulatedFps, teraflopGain, upgradeCount,
 } from '../src/game/logic';
 import { exportSave, hydrate, importSave, newState } from '../src/game/state';
 import { fmt, fmtFps, fmtTime } from '../src/ui/format';
@@ -80,6 +81,58 @@ describe('economy', () => {
   });
 });
 
+describe('goals, hype and the ending', () => {
+  it('points at the cheapest outstanding upgrade', () => {
+    const g = fresh();
+    expect(nextGoal(g.state)).toMatchObject({ kind: 'track', id: 'resolution', cost: 15 });
+    g.state.pixels = 1e60;
+    let guard = 0;
+    for (let goal = nextGoal(g.state); goal && guard < 200; goal = nextGoal(g.state), guard++) {
+      if (goal.kind === 'track') g.buyTrack(goal.id as never);
+      else if (goal.kind === 'fx') g.buyFx(goal.id as never);
+      else g.buyHardware();
+    }
+    expect(nextGoal(g.state)).toBeNull();
+    expect(upgradeCount(g.state)).toBe(TOTAL_GRAPHICS_UPGRADES);
+  });
+
+  it('doubles production for a limited time after a viral screenshot', () => {
+    const g = fresh();
+    g.state.pixels = 1e4;
+    g.buyGenerator('intern', 10);
+    const base = pixelsPerSecond(g.state);
+    expect(g.takePhoto()).toBe(true);
+    expect(pixelsPerSecond(g.state)).toBeCloseTo(base * HYPE_MULT);
+    expect(g.takePhoto()).toBe(false);
+    expect(g.state.stats.photos).toBe(2);
+    // A long tick only pays the bonus for the seconds hype actually lasted.
+    const before = g.state.pixels;
+    g.tick(HYPE_DURATION * 3);
+    expect(g.state.pixels - before).toBeCloseTo(base * HYPE_DURATION * (3 + HYPE_MULT - 1));
+    expect(hypeRemaining(g.state)).toBe(0);
+    expect(g.takePhoto()).toBe(false);
+    g.tick(HYPE_COOLDOWN);
+    expect(g.takePhoto()).toBe(true);
+  });
+
+  it('unlocks gameplay once everything is owned, and keeps it through prestige', () => {
+    const g = fresh();
+    const events: string[] = [];
+    g.on((e) => events.push(e.type));
+    expect(g.jump()).toBe(false);
+    g.state.pixels = g.state.runEarned = 1e60;
+    for (const tr of TRACKS) while (g.buyTrack(tr.id));
+    for (const fx of FX) g.buyFx(fx.id);
+    g.tick(0.1);
+    g.tick(0.1);
+    expect(events.filter((e) => e === 'ending')).toHaveLength(1);
+    expect(g.jump()).toBe(true);
+    expect(g.state.stats.jumps).toBe(1);
+    expect(g.prestige()).toBe(true);
+    expect(g.state.gameplayUnlocked).toBe(true);
+  });
+});
+
 describe('prestige and challenges', () => {
   it('resets the run but keeps permanent progress', () => {
     const g = fresh();
@@ -104,7 +157,8 @@ describe('prestige and challenges', () => {
     expect(g.startChallenge('noclick')).toBe(true);
     expect(clickValue(g.state)).toBe(0);
     g.state.pixels = 1e30;
-    while (upgradeCount(g.state) < 22) {
+    const goal = CHALLENGES.find((c) => c.id === 'noclick')!.goal;
+    while (upgradeCount(g.state) < goal) {
       const tr = TRACKS.find((x) => nextTrackCost(g.state, x.id) !== null)!;
       g.buyTrack(tr.id);
     }

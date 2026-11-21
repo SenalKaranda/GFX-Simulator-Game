@@ -1,16 +1,16 @@
 import './style.css';
 import { ACHIEVEMENTS, achievementById } from './game/achievements';
-import { FX, TRACKS, trackById } from './game/data';
+import { FX, TRACKS, generationName, trackById } from './game/data';
 import type { FxId } from './game/data';
 import { idlePost, postFor } from './game/feed';
-import { Game, OFFLINE_CAP_SECONDS, simulatedFps } from './game/logic';
+import { Game, HYPE_DURATION, OFFLINE_CAP_SECONDS, hypeCooldown, simulatedFps } from './game/logic';
 import type { GameEvent } from './game/logic';
 import { SAVE_KEY, exportSave, hydrate, importSave, newState, serialize } from './game/state';
 import type { GameState } from './game/state';
 import { Sound } from './audio';
 import { GfxRenderer } from './render/renderer';
 import type { GfxConfig } from './render/world';
-import { fmt, fmtTime } from './ui/format';
+import { fmt, fmtFps, fmtTime } from './ui/format';
 import { canvasToBlob, composePhoto } from './ui/photo';
 import { UI } from './ui/ui';
 
@@ -59,16 +59,45 @@ function configFrom(s: GameState): GfxConfig {
   return { ...s.tracks, fx };
 }
 
+// Before/after comparison wipe, in the style of a graphics analysis video.
+const wipe = document.getElementById('wipe')!;
+const wipeLine = document.getElementById('wipe-line')!;
+const wipeCanvas = document.getElementById('wipe-canvas') as HTMLCanvasElement;
+let wipeTimer = 0;
+
+function startWipe(before: HTMLCanvasElement): void {
+  const ctx = wipeCanvas.getContext('2d');
+  if (!ctx || before.width < 2) return;
+  wipeCanvas.width = before.width;
+  wipeCanvas.height = before.height;
+  ctx.drawImage(before, 0, 0);
+  wipeCanvas.classList.toggle('pixelated', before.classList.contains('pixelated'));
+  for (const el of [wipe, wipeLine]) {
+    el.hidden = false;
+    el.classList.remove('run');
+    void el.offsetWidth;
+    el.classList.add('run');
+  }
+  window.clearTimeout(wipeTimer);
+  wipeTimer = window.setTimeout(() => {
+    wipe.hidden = true;
+    wipeLine.hidden = true;
+  }, 1500);
+}
+
 let appliedKey = '';
 function syncRenderer(): void {
   if (!renderer) return;
   const cfg = configFrom(game.state);
   const key = JSON.stringify(cfg);
   if (key === appliedKey) return;
-  appliedKey = key;
   try {
+    // Grab the old look first; the canvas is only readable straight after a render.
+    if (appliedKey && game.state.settings.wipe && !document.hidden) startWipe(renderer.capture());
+    appliedKey = key;
     renderer.apply(cfg);
   } catch (err) {
+    appliedKey = key;
     console.error('Failed to apply graphics settings', err);
   }
 }
@@ -88,6 +117,13 @@ function applySettings(): void {
   const st = game.state.settings;
   sound.configure({ sfx: st.sfx, music: st.music, fan: st.fan, volume: st.volume });
   renderer?.setAutoRotate(st.autoRotate);
+  renderer?.setPerfSaver(st.perfSaver);
+}
+
+function doJump(): void {
+  if (!game.jump()) return;
+  renderer?.jump();
+  sound.jump();
 }
 
 const ui = new UI(
@@ -116,9 +152,23 @@ const ui = new UI(
       location.reload();
     },
     resolutionLabel,
+    perfLevel: () => renderer?.perfLevel ?? 0,
+    jump: doJump,
   },
   sound,
 );
+
+if (renderer) {
+  renderer.onPerfChange = (level) => {
+    ui.toast(
+      'Performance saver',
+      level >= 2
+        ? 'Still struggling, so more real detail has been turned down. Your fidelity score is unaffected.'
+        : 'Your actual GPU was struggling, so some real detail has been quietly turned down. Your fidelity score is unaffected: appearances are what matter.',
+    );
+    ui.invalidate();
+  };
+}
 
 function afterStateReplaced(): void {
   applySettings();
@@ -140,7 +190,7 @@ game.on((e: GameEvent) => {
     }
     case 'prestige':
       sound.prestige();
-      ui.toast(`Generation ${e.generation}`, `+${fmt(e.gained)} Teraflops. Everything you built is now retro.`);
+      ui.toast(`Generation ${e.generation}: ${generationName(e.generation)}`, `+${fmt(e.gained)} Teraflops. Everything you built is now retro.`);
       break;
     case 'challengeComplete':
       sound.achievement();
@@ -150,6 +200,14 @@ game.on((e: GameEvent) => {
       sound.deny();
       ui.toast('Challenge failed', 'Out of time. The generation continues without the handicap.');
       break;
+    case 'hype':
+      sound.achievement();
+      break;
+    case 'ending':
+      showEnding();
+      break;
+    case 'jump':
+      return;
     case 'click':
       sound.click();
       return;
@@ -171,7 +229,7 @@ function checkAchievements(): void {
 viewport.addEventListener('click', (e) => {
   sound.unlock();
   const target = e.target as HTMLElement;
-  if (target.closest('.dead-pixel')) return;
+  if (target.closest('.dead-pixel, .jump-btn')) return;
   if (renderer?.dragged) return;
   const value = game.click();
   const rect = viewport.getBoundingClientRect();
@@ -182,8 +240,21 @@ window.addEventListener('keydown', (e) => {
   sound.unlock();
   const tag = (e.target as HTMLElement).tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.key === 'p' || e.key === 'P') takePhoto();
-  if (e.key === 'm' || e.key === 'M') toggleMute();
+  if (!document.getElementById('modal-root')!.hidden) return;
+  const key = e.key.toLowerCase();
+  if (key === 'p') takePhoto();
+  else if (key === 'm') toggleMute();
+  else if (key === 'b') ui.buyGoal();
+  else if (key >= '1' && key <= '5') ui.selectTab(Number(key) - 1);
+  else if (key === ' ' && game.state.gameplayUnlocked && tag !== 'BUTTON') {
+    e.preventDefault();
+    doJump();
+  }
+});
+document.getElementById('btn-jump')!.addEventListener('click', (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  doJump();
 });
 
 function toggleMute(): void {
@@ -207,13 +278,16 @@ function takePhoto(): void {
   const s = game.state;
   const tierName = trackById('resolution').tiers[s.tracks.resolution].name;
   const photo = composePhoto(renderer.capture(), s, tierName);
-  s.stats.photos++;
+  const viral = game.takePhoto();
   sound.shutter();
   viewport.classList.remove('flash');
   void viewport.offsetWidth;
   viewport.classList.add('flash');
   const filename = `gfx-simulator-gen${s.generation}-${Date.now()}.png`;
-  const box = ui.modal('Photo mode', '<div class="photo-wrap"></div><p class="note">Proof that it looked this good. Nobody needs to know about the frame rate.</p>', [
+  const caption = viral
+    ? `<b>It went viral.</b> Hype: 2× pixels for ${HYPE_DURATION} seconds. Nobody needs to know about the frame rate.`
+    : `Proof that it looked this good. The internet has seen one of these recently; the next one goes viral in ${fmtTime(hypeCooldown(s))}.`;
+  const box = ui.modal('Photo mode', `<div class="photo-wrap"></div><p class="note">${caption}</p>`, [
     {
       label: 'Download',
       primary: true,
@@ -257,6 +331,53 @@ function takePhoto(): void {
   photo.className = 'photo';
   box.querySelector('.photo-wrap')!.appendChild(photo);
   checkAchievements();
+}
+
+// -------------------------------------------------------------------- ending
+
+function showEnding(): void {
+  const s = game.state;
+  sound.prestige();
+  ui.modal(
+    'The graphics are finished.',
+    `<p>60 of 60. Every setting maxed, every effect on. There is nothing left to improve${simulatedFps(s) < 30 ? ` and, at ${fmtFps(simulatedFps(s))}, barely anything left to see` : `. It even runs at ${fmtFps(simulatedFps(s))}, which nobody can explain`}.</p>
+     <dl class="stats">
+       <dt>Time played</dt><dd>${fmtTime(s.stats.playTime)}</dd>
+       <dt>Console generations</dt><dd>${s.generation}</dd>
+       <dt>Pixels rendered</dt><dd>${fmt(s.totalEarned)}</dd>
+       <dt>Scene clicks</dt><dd>${fmt(s.stats.clicks)}</dd>
+       <dt>Gameplay requests denied</dt><dd>${s.stats.gameplayRequests}</dd>
+     </dl>
+     <p class="credits-roll">Directed by <b>the settings menu</b> · Written by <b>nobody</b> · Level design: <b>one (1) field</b> · Gameplay programmer: <b>position unfilled</b></p>
+     <p>As promised on the roadmap (it was never on the roadmap), <b>gameplay has been unlocked</b>. Reviewers are standing by.</p>`,
+    [{ label: 'Play the game', primary: true }],
+    true,
+  );
+}
+
+function showIntro(): void {
+  ui.modal(
+    'Welcome to GFX Simulator',
+    `<p>The only game honest enough to admit what you came for.</p>
+     <ul class="intro-list">
+       <li><b>Click the scene</b> to render pixels.</li>
+       <li><b>Spend pixels on graphics.</b> Every upgrade really changes the picture, and really costs frame rate.</li>
+       <li><b>Hire staff</b> so the pixels keep coming while you admire the puddles.</li>
+     </ul>
+     <p class="note">There is no gameplay. Please do not ask.</p>`,
+    [
+      {
+        label: 'Start rendering',
+        primary: true,
+        onClick: () => {
+          game.state.introSeen = true;
+          sound.unlock();
+          save();
+        },
+      },
+    ],
+    true,
+  );
 }
 
 // ---------------------------------------------------------------- dead pixel
@@ -347,6 +468,7 @@ if (away) {
     [{ label: 'Excellent', primary: true }],
   );
 }
+else if (!game.state.introSeen && game.state.totalEarned === 0) showIntro();
 checkAchievements();
 scheduleIdlePost();
 requestAnimationFrame(frame);

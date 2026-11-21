@@ -342,7 +342,7 @@ button {
 .hint {
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: 76%;
   transform: translate(-50%, -50%);
   padding: 8px 14px;
   background: #000b;
@@ -857,6 +857,12 @@ input[type='range'] {
   color: var(--tf);
 }
 
+.gen-number small {
+  margin-left: 10px;
+  font: 600 13px system-ui, sans-serif;
+  color: var(--muted);
+}
+
 .tf-text {
   color: var(--tf);
 }
@@ -981,7 +987,7 @@ input[type='range'] {
 }
 
 .toast {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 10px;
   background: #1b2030f2;
   border: 1px solid var(--line);
@@ -1091,6 +1097,228 @@ input[type='range'] {
   height: auto;
   border-radius: 8px;
   border: 1px solid var(--line);
+}
+
+/* -------------------------------------------------- wipe, goal, hype, jump */
+
+.wipe {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  clip-path: inset(0 0 0 0);
+}
+
+.wipe canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.wipe canvas.pixelated {
+  image-rendering: pixelated;
+}
+
+.wipe.run {
+  animation: wipe 1.3s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes wipe {
+  to {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+
+.wipe-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 14px 2px #fff9;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.wipe-line.run {
+  animation: wipe-line 1.3s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes wipe-line {
+  to {
+    left: 100%;
+  }
+}
+
+.wipe-tag {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  padding: 4px 7px;
+  border-radius: 3px;
+  background: #000c;
+  color: #fff;
+  font: 800 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.penalty {
+  color: #ff9aa9;
+}
+
+.badge-hype {
+  background: linear-gradient(90deg, #ff2d6f, #ff8a00);
+  color: #fff;
+  box-shadow: 0 0 18px #ff2d6f88;
+  letter-spacing: 0.06em;
+}
+
+.icon-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.icon-btn.ready {
+  border-color: #ff2d6f;
+  box-shadow: 0 0 12px #ff2d6f66;
+}
+
+.cooldown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: #0009;
+  pointer-events: none;
+}
+
+.jump-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 54px;
+  z-index: 3;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 2px solid #fff;
+  background: #000a;
+  font: 800 15px var(--mono);
+  letter-spacing: 0.1em;
+}
+
+.jump-btn small {
+  margin-left: 6px;
+  font-weight: 500;
+  font-size: 10px;
+  opacity: 0.7;
+  letter-spacing: 0;
+}
+
+.jump-btn:active {
+  transform: translateY(2px);
+}
+
+.goal {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.goal:hover {
+  background: #1c2130;
+}
+
+.goal-k {
+  flex: none;
+  font: 800 10px var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--dim);
+}
+
+.goal-name {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.goal-bar {
+  flex: 1;
+  min-width: 30px;
+  height: 6px;
+  border-radius: 3px;
+  background: #0008;
+  overflow: hidden;
+}
+
+.goal-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+.goal-eta {
+  flex: none;
+  font: 12px var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.goal.ready {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+}
+
+.goal.ready .goal-eta,
+.goal.ready .goal-k {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.goal.done .goal-bar,
+.goal.done .goal-k {
+  display: none;
+}
+
+.goal.done .goal-name {
+  max-width: none;
+  color: var(--gold);
+}
+
+.intro-list {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.intro-list li {
+  margin: 6px 0;
+}
+
+.credits-roll {
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.modal-body .stats {
+  margin: 12px 0;
+  color: var(--text);
 }
 
 /* ------------------------------------------------------------------- mobile */
