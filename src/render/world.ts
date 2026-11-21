@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import type { FxId, TrackId } from '../game/data';
+import { buildHero } from './hero';
 import { FLAT_COLOURS, getTextures, getWaterNormals } from './textures';
 import type { TextureKind } from './textures';
 
@@ -16,7 +17,6 @@ const ICO_DETAIL = [0, 0, 1, 2, 3, 5];
 const TREE_COUNT = [3, 9, 22, 48, 95];
 const GRASS_COUNT = [0, 500, 5000, 22000, 70000];
 const FLOWER_COUNT = [0, 0, 250, 1400, 4500];
-const HAIR_COUNT = [0, 0, 140, 4500, 26000];
 const SHADOW_MAP = [0, 0, 512, 2048, 4096];
 /**
  * Performance saver levels (0 = off, 3 = emergency). These cut the real cost of
@@ -55,10 +55,13 @@ function rng(seed: number): () => number {
   };
 }
 
-interface MatOptions {
+export interface MatOptions {
   rough?: number;
   metal?: number;
+  /** Replaces the base colour outright. */
   colour?: number;
+  /** Multiplies the base colour (texture or flat), for variations on a material. */
+  tint?: number;
   textured?: boolean;
   doubleSided?: boolean;
   vertexColors?: boolean;
@@ -180,9 +183,11 @@ export class World {
   private mat(kind: TextureKind, o: MatOptions = {}): THREE.Material {
     const L = Math.max(this.cfg.lighting, o.minLighting ?? 0);
     const tex = o.textured === false ? { map: null, bumpMap: null } : getTextures(kind, this.cfg.textures, this.maxAniso);
+    const colour = new THREE.Color(o.colour ?? (tex.map ? 0xffffff : FLAT_COLOURS[kind]));
+    if (o.tint !== undefined) colour.multiply(new THREE.Color(o.tint));
     const base = {
       map: tex.map,
-      color: o.colour ?? (tex.map ? 0xffffff : FLAT_COLOURS[kind]),
+      color: colour,
       side: o.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
       vertexColors: o.vertexColors ?? false,
       transparent: o.transparent ?? false,
@@ -295,101 +300,23 @@ export class World {
   }
 
   private addHero(): void {
-    const p = this.cfg.polygons;
-    const hero = this.add(new THREE.Group());
-    hero.position.copy(HERO);
-    hero.scale.setScalar(1.5);
-    hero.rotation.y = 0.5;
-    const metal = this.mat('metal', { rough: 0.35, metal: 1 });
-    const cloth = this.mat('cloth', { rough: 0.9 });
-    const skin = this.mat('skin', { rough: 0.6 });
-
-    const body = this.add(new THREE.Group(), hero);
-    for (const side of [-1, 1]) {
-      this.mesh(this.cylinder(0.13, 0.11, 0.85), metal, hero).position.set(side * 0.16, 0.425, 0);
-      const arm = this.mesh(this.cylinder(0.09, 0.08, 0.72), metal, body);
-      arm.position.set(side * 0.42, 1.18, 0);
-      arm.rotation.z = side * 0.16;
-      this.mesh(this.sphere(0.09), skin, body).position.set(side * 0.48, 0.8, 0);
-      if (p >= 1) this.mesh(this.sphere(0.17), metal, body).position.set(side * 0.36, 1.52, 0);
-      if (p >= 2) {
-        const eye = this.mesh(this.sphere(0.03), new THREE.MeshBasicMaterial({ color: 0x1a1a22 }), body);
-        eye.position.set(side * 0.09, 1.9, 0.215);
-        eye.castShadow = false;
-      }
-    }
-    this.mesh(this.cylinder(0.3, 0.22, 0.78), cloth, body).position.y = 1.22;
-    const headCentre = new THREE.Vector3(0, 1.86, 0);
-    this.mesh(this.sphere(0.24), skin, body).position.copy(headCentre);
-    this.addHair(body, headCentre, 0.24);
-
-    // A sword planted in the ground, because of course.
-    const sword = this.add(new THREE.Group(), hero);
-    sword.position.set(0.62, 0, 0.25);
-    sword.rotation.z = -0.06;
-    this.mesh(new THREE.BoxGeometry(0.08, 1.15, 0.02), metal, sword).position.y = 0.575;
-    this.mesh(new THREE.BoxGeometry(0.34, 0.05, 0.07), metal, sword).position.y = 1.16;
-    this.mesh(this.cylinder(0.03, 0.03, 0.26), this.mat('bark', { rough: 0.8 }), sword).position.y = 1.31;
-
-    // Idle "breathing" so there is always something moving to judge the frame rate by.
+    const hero = buildHero({
+      cfg: this.cfg,
+      instanceScale: PERF_INSTANCE_SCALE[this.perf],
+      time: this.time,
+      mat: (kind, o) => this.mat(kind, o),
+      mesh: (geo, material, parent) => this.mesh(geo, material, parent),
+    });
+    hero.group.position.copy(HERO);
+    hero.group.scale.setScalar(1.5);
+    hero.group.rotation.y = 0.5;
+    this.add(hero.group);
     this.animators.push((t) => {
-      body.position.y = Math.sin(t * 1.6) * 0.012;
-      body.rotation.y = Math.sin(t * 0.5) * 0.08;
+      hero.update(t);
       const j = (t - this.jumpStart) / 0.7;
-      hero.position.y = j > 0 && j < 1 ? 4.4 * j * (1 - j) : 0;
+      hero.group.position.y = j > 0 && j < 1 ? 4.4 * j * (1 - j) : 0;
     });
     this.blob(HERO.x, HERO.z, 0.95);
-  }
-
-  private addHair(parent: THREE.Object3D, centre: THREE.Vector3, radius: number): void {
-    const tier = this.cfg.hair;
-    if (tier === 0) return;
-    const colour = 0x4a2c17;
-    if (tier === 1) {
-      const helmet = this.mesh(this.sphere(radius * 1.1, Math.PI * 0.55), this.mat('bark', { colour, textured: false, rough: 0.7 }), parent);
-      helmet.position.copy(centre);
-      return;
-    }
-    const count = Math.round(HAIR_COUNT[tier] * (tier >= 3 ? PERF_INSTANCE_SCALE[this.perf] : 1));
-    const width = tier === 2 ? 0.06 : tier === 3 ? 0.012 : 0.006;
-    // A strand is a tapered sliver pointing along +Y in its local frame.
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute([-width, 0, 0, width, 0, 0, 0, 1, 0], 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0.3, 1, 0, 0.3, 1, 0, 0.3, 1], 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0.5, 1], 2));
-    const material = this.mat('bark', { colour: 0xffffff, textured: false, doubleSided: true, rough: 0.45 });
-    if (tier >= 4) this.addSway(material, '0.07 * position.y * position.y');
-    const hair = new THREE.InstancedMesh(geo, material, count);
-    const rand = rng(77);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const up = new THREE.Vector3(0, 1, 0);
-    const dir = new THREE.Vector3();
-    const at = new THREE.Vector3();
-    const scale = new THREE.Vector3();
-    const tint = new THREE.Color();
-    let placed = 0;
-    while (placed < count) {
-      // Random point on the scalp: upper part of the head, leaving the face clear.
-      const y = -0.25 + rand() * 1.25;
-      const a = rand() * Math.PI * 2;
-      const s = Math.sqrt(Math.max(0, 1 - y * y));
-      dir.set(Math.cos(a) * s, y, Math.sin(a) * s);
-      if (dir.z > 0.35 && dir.y < 0.6) continue;
-      at.copy(dir).multiplyScalar(radius * 0.98).add(centre);
-      dir.multiplyScalar(0.45).add(new THREE.Vector3((rand() - 0.5) * 0.3, -0.85, (rand() - 0.5) * 0.3 - 0.12)).normalize();
-      q.setFromUnitVectors(up, dir);
-      const length = 0.22 + rand() * 0.26;
-      scale.set(1, length, 1);
-      m.compose(at, q, scale);
-      hair.setMatrixAt(placed, m);
-      const shade = 0.75 + rand() * 0.55;
-      hair.setColorAt(placed, tint.set(colour).multiplyScalar(shade));
-      placed++;
-    }
-    hair.castShadow = this.cfg.shadows >= 3;
-    hair.frustumCulled = false;
-    this.add(hair, parent);
   }
 
   private blobs: { x: number; z: number; r: number }[] = [];
@@ -533,6 +460,8 @@ export class World {
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       if (Math.hypot(x - POND.x, z - POND.y) < POND_RADIUS + 0.1) continue;
+      // Leave a small clearing so blades do not grow through the hero's boots and sword.
+      if (Math.hypot(x - HERO.x, z - HERO.z) < 0.75) continue;
       q.setFromAxisAngle(yAxis, rand() * Math.PI * 2);
       const h = 0.3 + rand() * 0.5;
       m.compose(new THREE.Vector3(x, terrainHeight(x, z) - 0.02, z), q, new THREE.Vector3(1.2, h, 1.2));

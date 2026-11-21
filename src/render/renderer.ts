@@ -206,9 +206,10 @@ export class GfxRenderer {
     this.renderer.setPixelRatio(1);
     this.renderer.setClearColor(0x000000);
 
-    this.camera.position.set(6.8, 2.9, 6.6);
+    this.camera.position.set(2.7, 2.5, 5.7);
     this.controls = new OrbitControls(this.camera, this.canvas);
-    this.controls.target.set(0.2, 1.5, 0.8);
+    // Frame the hero, with the pond filling the rest of the shot.
+    this.controls.target.set(-0.7, 1.75, 0.7);
     this.controls.enablePan = false;
     this.controls.enableDamping = true;
     this.controls.minDistance = 4;

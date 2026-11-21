@@ -80,6 +80,7 @@ off under Options → Display ("Protect my real GPU").
 | `src/game/state.ts` | Save format, hydration of untrusted saves, export/import |
 | `src/game/achievements.ts`, `feed.ts` | Trophies and the satirical text layer |
 | `src/render/world.ts` | Builds the 3D diorama for a given set of quality tiers |
+| `src/render/hero.ts` | The knight: one skeleton, dressed differently at every polygon tier |
 | `src/render/renderer.ts` | Three.js renderer, camera, post-processing chain |
 | `src/render/textures.ts` | Procedural textures at whatever resolution was paid for |
 | `src/ui/` | DOM interface, number formatting, photo mode |

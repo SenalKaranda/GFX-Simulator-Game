@@ -1,7 +1,8 @@
 // Procedural textures, generated at whatever resolution the player has paid for.
 import * as THREE from 'three';
 
-export type TextureKind = 'grass' | 'rock' | 'bark' | 'leaves' | 'crate' | 'metal' | 'skin' | 'cloth' | 'barrel';
+export type TextureKind =
+  | 'grass' | 'rock' | 'bark' | 'leaves' | 'crate' | 'metal' | 'skin' | 'cloth' | 'barrel' | 'leather' | 'linen';
 
 type RGB = [number, number, number];
 
@@ -91,6 +92,16 @@ const PATTERNS: Record<TextureKind, (u: number, v: number) => RGB> = {
     const weave = 0.5 + 0.25 * Math.sin(u * Math.PI * 64) + 0.25 * Math.sin(v * Math.PI * 64);
     return mul([0.62, 0.12, 0.14], 0.7 + 0.4 * weave * (0.7 + 0.3 * fbm(u, v, 6, 15)));
   },
+  leather: (u, v) => {
+    const grain = fbm(u, v, 24, 16);
+    const crease = Math.abs(fbm(u, v, 6, 17) - 0.5) < 0.02 ? 0.72 : 1;
+    return mul([0.4, 0.25, 0.14], (0.72 + 0.5 * grain) * crease);
+  },
+  // A neutral weave meant to be tinted by the material.
+  linen: (u, v) => {
+    const weave = 0.5 + 0.25 * Math.sin(u * Math.PI * 96) + 0.25 * Math.sin(v * Math.PI * 96);
+    return mul([0.86, 0.84, 0.8], 0.78 + 0.22 * weave * (0.75 + 0.25 * fbm(u, v, 8, 18)));
+  },
 };
 
 /** The single flat colour used when textures are switched off. */
@@ -104,6 +115,8 @@ export const FLAT_COLOURS: Record<TextureKind, number> = {
   metal: 0xaab3c6,
   skin: 0xddab87,
   cloth: 0x9c2126,
+  leather: 0x5f3d22,
+  linen: 0xd4d0c8,
 };
 
 /** Texture edge length per Texture Quality tier (tier 0 has no textures at all). */
